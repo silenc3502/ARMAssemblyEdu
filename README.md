@@ -1,2 +1,2 @@
 # ARMAssemblyEdu
-ARM Assembly Programming Educations Resource
+ARM Assembly Programming Education Resources  

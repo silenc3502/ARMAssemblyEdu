@@ -1,0 +1,37 @@
+sudo apt-get install qemu-user-static qemu-system
+sudo apt-get install gcc-arm-linux-gnueabi
+
+
+/********* Dynamic Version *********/
+
+arm-linux-gnueabi-gcc -S '*.c'
+
+qemu-arm-static -g 1234 -L /usr/arm-linux/gnueabi ./a.out
+
+gdb-multiarch
+file a.out
+target remote localhost:1234
+b main
+c
+
+qemu-arm-static -L /usr/arm-linux/gnueabi ./a.out
+
+
+
+/********* /lib/ld-linux.so.3 Problem  *********/
+
+arm-linux-gnueabi-gcc second.S
+
+qemu-arm -L /usr/arm-linux-gnueabi a.out
+
+
+
+/********* Static Version *********/
+
+arm-linux-gnueabi-gcc -static '*.c'
+
+qemu-arm a.out
+
+/********* Floating *********/
+
+arm-linux-gnueabi-gcc -mfloat-abi=softfp -mfpu=neon '*.S'
