@@ -7,14 +7,40 @@
 #include <asm/types.h>
 
 #include "arm_neon.h"
-#include "ogl_sdl_support.h"
 
 #define	MAX		10000
 
 typedef struct timeval	tv;
 
-static unsigned char *texels;
-static unsigned int width, height;
+#include <stdio.h>
+#include <stdlib.h>
+
+#pragma pack(push,1)
+/* Windows 3.x bitmap file header */
+typedef struct {
+    char         filetype[2];   /* magic - always 'B' 'M' */
+    unsigned int filesize;
+    short        reserved1;
+    short        reserved2;
+    unsigned int dataoffset;    /* offset in bytes to actual bitmap data */
+} file_header;
+
+/* Windows 3.x bitmap full header, including file header */
+typedef struct {
+    file_header  fileheader;
+    unsigned int headersize;
+    int          width;
+    int          height;
+    short        planes;
+    short        bitsperpixel;  /* we only support the value 24 here */
+    unsigned int compression;   /* we do not support compression */
+    unsigned int bitmapsize;
+    int          horizontalres;
+    int          verticalres;
+    unsigned int numcolors;
+    unsigned int importantcolors;
+} bitmap_header;
+#pragma pack(pop)
 
 #if 0
 #pragma pack(2)
@@ -532,11 +558,11 @@ void neon_4x4_matrix_mul2(float *A, float32x4_t *B, float *R)
 void general_gray_scale(unsigned char *in, unsigned char *out, int width, int height)
 {
 	int i, j, val = 0;
-	int width4 = width * 4;
+	int width4 = width * 3;
 
 	for(i = 0; i < height; i++)
 	{
-		for(j = 0; j < width4; j += 4)
+		for(j = 0; j < width4; j += 3)
 		{
 			val = in[j + i * width4 + 0] * 0.299 +
 				in[j + i * width4 + 1] * 0.587 +
@@ -545,7 +571,91 @@ void general_gray_scale(unsigned char *in, unsigned char *out, int width, int he
 			out[j + i * width4 + 0] = val;
 			out[j + i * width4 + 1] = val;
 			out[j + i * width4 + 2] = val;
-			out[j + i * width4 + 3] = in[j + i * width4 + 3];
+			//out[j + i * width4 + 3] = in[j + i * width4 + 3];
+		}
+	}
+}
+
+void neon_gray_scale(unsigned char *in, unsigned char *out, int width, int height)
+{
+	int j = 0, i = 0;
+	int width4 = width * 3;
+
+	float32x4_t redoffset = vmovq_n_f32(0.299);
+	float32x4_t greenoffset = vmovq_n_f32(0.587);
+	float32x4_t blueoffset = vmovq_n_f32(0.114);
+
+	uint8x8x3_t rgb, dest;
+	uint16x8_t red, green, blue;
+	uint16x4_t high, low;
+	uint32x4_t inthi, intlo;
+	float32x4_t floathi, floatlo;
+	uint8x8_t TotalValue, greenvalue, bluevalue;
+
+	for(i = 0; i < height; i++)
+	{
+		for(j = 0; j < width4; j += 24)
+		{
+			rgb = vld3_u8(&in[j + i * width4]);
+
+			red = vmovl_u8(rgb.val[0]);
+			high = vget_high_u16(red);
+			low = vget_low_u16(red);
+			inthi = vmovl_u16(high);
+			intlo = vmovl_u16(low);
+			floathi = vcvtq_f32_u32(inthi);
+			floatlo = vcvtq_f32_u32(intlo);
+			floathi = vmulq_f32(floathi, redoffset);
+			floatlo = vmulq_f32(floatlo, redoffset);
+			inthi = vcvtq_u32_f32(floathi);
+			intlo = vcvtq_u32_f32(floatlo);
+			high = vmovn_u32(inthi);
+			low = vmovn_u32(intlo);
+			red = vcombine_u16(low, high);
+			TotalValue = vmovn_u16(red);
+
+			green = vmovl_u8(rgb.val[1]);
+			high = vget_high_u16(green);
+			low = vget_low_u16(green);
+			inthi = vmovl_u16(high);
+			intlo = vmovl_u16(low);
+			floathi = vcvtq_f32_u32(inthi);
+			floatlo = vcvtq_f32_u32(intlo);
+			floathi = vmulq_f32(floathi, greenoffset);
+			floatlo = vmulq_f32(floatlo, greenoffset);
+			inthi = vcvtq_u32_f32(floathi);
+			intlo = vcvtq_u32_f32(floatlo);
+			high = vmovn_u32(inthi);
+			low = vmovn_u32(intlo);
+			green = vcombine_u16(low, high);
+			greenvalue = vmovn_u16(green);
+
+			TotalValue = vadd_u8(TotalValue, greenvalue);
+
+			blue = vmovl_u8(rgb.val[2]);
+			high = vget_high_u16(blue);
+			low = vget_low_u16(blue);
+			inthi = vmovl_u16(high);
+			intlo = vmovl_u16(low);
+			floathi = vcvtq_f32_u32(inthi);
+			floatlo = vcvtq_f32_u32(intlo);
+			floathi = vmulq_f32(floathi, blueoffset);
+			floatlo = vmulq_f32(floatlo, blueoffset);
+			inthi = vcvtq_u32_f32(floathi);
+			intlo = vcvtq_u32_f32(floatlo);
+			high = vmovn_u32(inthi);
+			low = vmovn_u32(intlo);
+			blue = vcombine_u16(low, high);
+			bluevalue = vmovn_u16(blue);
+
+			TotalValue = vadd_u8(TotalValue, bluevalue);
+
+			dest.val[0] = TotalValue;
+			dest.val[1] = TotalValue;
+			dest.val[2] = TotalValue;
+			//dest.val[3] = rgb.val[3];
+
+			vst3_u8(&out[j + i * width4], dest);
 		}
 	}
 }
@@ -637,58 +747,140 @@ static void readBmp(char *filename)
 int main(int argc, char **argv)
 {
 	tv start, end;
-	unsigned char *out;
+
+	int n;
+	char *data_in;
+	char *data_out;
+	char *neon_data_out;
+	FILE *in, *out, *neon_out;
+	bitmap_header *hp;
+
+	in = fopen("./f22.bmp", "rb");
+	if(in == NULL)
+	{
+		printf("Fail to open input image\n");
+		exit(-1);
+	}
+
+	hp = (bitmap_header *)malloc(sizeof(bitmap_header));
+	if(hp == NULL)
+	{
+		printf("Fail to Memory Allocation\n");
+		exit(-1);
+	}
+
+	printf("Bits per Pixel = %u\n", hp->bitsperpixel);
+
+	n = fread(hp, sizeof(bitmap_header), 1, in);
+	if(n < 1) 
+	{
+		printf("Something Wrong when read header\n");
+		exit(-1);
+	}
+
+	data_in = (char *)malloc(sizeof(char) * hp->bitmapsize);
+	if(data_in == NULL)
+	{
+		printf("Fail to Allocate Input Image Data\n");
+		exit(-1);
+	}
 
 #if 0
+	data_out = (char *)malloc(sizeof(char) * hp->bitmapsize * 4 / 3);
+#else
+	data_out = (char *)malloc(sizeof(char) * hp->bitmapsize);
+#endif
+	if(data_out == NULL)
+	{
+		printf("Fail to Allocate Output Image Data\n");
+		exit(-1);
+	}
+
+	neon_data_out = (char *)malloc(sizeof(char) * hp->bitmapsize);
+	if(neon_data_out == NULL)
+	{
+		printf("Fail to Allocate Neon Output Image Data\n");
+		exit(-1);
+	}
+
+	fseek(in, sizeof(char) * hp->fileheader.dataoffset, SEEK_SET);
+	n = fread(data_in, sizeof(char), hp->bitmapsize, in);
+	if(n < 1)
+	{
+		printf("Something Wrong when read data\n");
+		exit(-1);
+	}
+
+	out = fopen("res.bmp", "wb");
+	if(out == NULL)
+	{
+		printf("Fail to open output image\n");
+		exit(-1);
+	}
+
+	neon_out = fopen("neon_res.bmp", "wb");
+	if(out == NULL)
+	{
+		printf("Fail to open neon output image\n");
+		exit(-1);
+	}
+
+
 	gettimeofday(&start, NULL);
 
-	general_gray_scale(texels, out, width, height);
+	general_gray_scale(data_in, data_out, hp->width, hp->height);
 
 	gettimeofday(&end, NULL);
 	get_runtime(start, end);
+
+	n = fwrite(hp, sizeof(char), sizeof(bitmap_header), out);
+	if(n < 1)
+	{
+		printf("write data: header\n");
+		exit(-1);
+	}
+
+	fseek(out, sizeof(char) * hp->fileheader.dataoffset, SEEK_SET);
+#if 0
+	n = fwrite(data_out, sizeof(char), hp->bitmapsize * 4 / 3, out);
+#else
+	n = fwrite(data_out, sizeof(char), hp->bitmapsize, out);
 #endif
-
-	AppData ad = {0,};
-
-    if (0 != SDL_Init(SDL_INIT_EVERYTHING))
+	if(n < 1)
 	{
-       SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, "[SDL] Initialize Failed");
-       return -1;
-    }
+		printf("write data: image data\n");
+		exit(-1);
+	}
 
-    ad.window = SDL_CreateWindow(NULL, 2000, 0, WIDTH, HEIGHT, 
-							SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL);
-    if (ad.window == 0)
+	gettimeofday(&start, NULL);
+
+	neon_gray_scale(data_in, neon_data_out, hp->width, hp->height);
+
+	gettimeofday(&end, NULL);
+	get_runtime(start, end);
+
+	n = fwrite(hp, sizeof(char), sizeof(bitmap_header), neon_out);
+	if(n < 1)
 	{
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION, 
-						"[SDL] Failed to create Window");
-        SDL_Quit();
-        return -1;
-    }
+		printf("neon write data: header\n");
+		exit(-1);
+	}
 
-    surface = SDL_LoadBMP("./f22.bmp");
-    initGL(&ad);
- 
-    GLInit(&ad);
-    SDL_bool isQuit = SDL_FALSE;
-
-    while(!isQuit)
+	fseek(neon_out, sizeof(char) * hp->fileheader.dataoffset, SEEK_SET);
+	n = fwrite(neon_data_out, sizeof(char), hp->bitmapsize, neon_out);
+	if(n < 1)
 	{
-        SDL_Event event;
+		printf("write data: image data\n");
+		exit(-1);
+	}
 
-        if(SDL_PollEvent(&event))
-		{
-            switch(event.type)
-            {
-            case SDL_QUIT:
-            isQuit = SDL_TRUE;
-            break;
-            }
-        }
-        drawGL(&ad);
-        SDL_GL_SwapWindow(ad.window);
-    }
+	fclose(in);
+	fclose(out);
+	fclose(neon_out);
+	free(hp);
+	free(data_in);
+	free(data_out);
+	free(neon_data_out);
 
-    SDL_Quit();
     return 0;
 }
