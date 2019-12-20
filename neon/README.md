@@ -90,4 +90,5 @@ https://community.arm.com/developer/ip-products/processors/b/processors-ip-blog/
 42.c: Vector Interleave & De-Interleave  
 43.c: Vector Scalar Multiplication  
 44.c: 4x4 Matrix Multiplication General vs NEON  
-44.c: 44.c upgrade version  
+45.c: 44.c upgrade version  
+46.c: Applied it to Multimedia  
